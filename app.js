@@ -9,6 +9,7 @@
   const filters = {
     inventory: [
       ["all", "全部"],
+      ["recent", "本次采购"],
       ["soon", "3天内到期"],
       ["expired", "已过期限"],
       ["missing", "待补日期"],
@@ -61,9 +62,11 @@
     let raw = null;
     try {
       raw = localStorage.getItem(P.STORAGE_KEY);
-      if (raw !== null) state = P.parseBackup(raw);
+      if (raw !== null) state = P.applyPurchaseUpdates(P.parseBackup(raw));
       else {
-        state = P.parseBackup({ version: 1, items: P.seedItems() });
+        state = P.applyPurchaseUpdates(
+          P.parseBackup({ version: 1, items: P.seedItems() }),
+        );
         localStorage.setItem(P.STORAGE_KEY, JSON.stringify(state));
       }
     } catch (error) {
@@ -84,12 +87,15 @@
         localStorage.setItem(P.STORAGE_KEY, JSON.stringify(state));
       } catch (error) {
         showStorageError(
-          "保质期信息尚未保存，请允许网站存储后重试。原有记录仍保留。",
+          "采购补录或保质期信息尚未保存，请允许网站存储后重试。原有记录仍保留。",
         );
       }
     }
   }
-  function commit(items) {
+  function commit(
+    items,
+    appliedPurchaseBatches = state.appliedPurchaseBatches || [],
+  ) {
     if (!storageReadable) {
       toast("请先导出并检查原始记录，当前无法写入。");
       return false;
@@ -97,17 +103,14 @@
     try {
       // Re-read before writing to detect edits made in another tab.
       const stored = localStorage.getItem(P.STORAGE_KEY);
-      const actual = stored === null ? [] : P.parseBackup(stored).items;
-      if (
-        JSON.stringify(actual) !== JSON.stringify(state.items) &&
-        stored !== null
-      ) {
-        state = { version: 1, items: actual };
+      const actual = stored === null ? null : P.parseBackup(stored);
+      if (JSON.stringify(actual) !== JSON.stringify(state) && stored !== null) {
+        state = actual;
         render();
         toast("另一页面更新了记录，已刷新。请核对后再保存本次修改。");
         return false;
       }
-      const next = { version: 1, items: items.map(P.validateItem) };
+      const next = P.parseBackup({ version: 1, items, appliedPurchaseBatches });
       localStorage.setItem(P.STORAGE_KEY, JSON.stringify(next));
       state = next;
       $("#storage-error").hidden = true;
@@ -135,6 +138,8 @@
     const info = P.deadlineInfo(item, today);
     return (
       candidateFilter === "all" ||
+      (candidateFilter === "recent" &&
+        item.id.startsWith(`${P.PURCHASE_BATCH_ID}-`)) ||
       (candidateFilter === "soon" &&
         info.days !== null &&
         info.days >= 0 &&
@@ -193,6 +198,7 @@
     const info = P.deadlineInfo(item, today);
     const detailDates = [
       `购买 ${dateText(item.purchaseDate)}`,
+      item.productionDate ? `生产 ${dateText(item.productionDate)}` : "",
       item.shelfLife ? `保质期 ${escape(item.shelfLife)}` : "",
       item.openedDate ? `开封 ${dateText(item.openedDate)}` : "",
       item.expiryDate ? `包装到期 ${dateText(item.expiryDate)}` : "",
@@ -516,7 +522,13 @@
           "合并导入",
         )
       ) {
-        if (commit(P.mergeItems(state.items, incoming.items)))
+        const batches = [
+          ...new Set([
+            ...(state.appliedPurchaseBatches || []),
+            ...(incoming.appliedPurchaseBatches || []),
+          ]),
+        ];
+        if (commit(P.mergeItems(state.items, incoming.items), batches))
           toast("备份已合并导入");
       }
     } catch (error) {

@@ -5,9 +5,10 @@ const item = (overrides) => ({ ...P.seedItems()[0], ...overrides });
 
 test("original purchases remain exact, with all unknown dates unguessed", () => {
   const items = P.seedItems();
-  assert.equal(items.length, 11);
-  assert.equal(P.summarize(items, "2026-10-26").spent, 135.76);
-  assert.equal(P.summarize(items, "2026-10-26").missing, 11);
+  assert.equal(items.length, 15);
+  assert.equal(P.summarize(items.slice(0, 11), "2026-10-26").spent, 135.76);
+  assert.equal(P.summarize(items, "2026-11-03").spent, 190.11);
+  assert.equal(P.summarize(items, "2026-11-03").missing, 15);
   assert.ok(
     items.every(
       (value) =>
@@ -15,6 +16,93 @@ test("original purchases remain exact, with all unknown dates unguessed", () => 
     ),
   );
   assert.deepEqual(P.parseBackup({ version: 1, items }).items, items);
+});
+
+test("delivered order records exact line totals, production dates and visible quantities", () => {
+  const items = P.purchaseItems();
+  assert.equal(items.length, 4);
+  assert.equal(P.summarize(items, "2026-11-03").spent, 54.35);
+  assert.deepEqual(
+    items.map((item) => item.price),
+    [24.27, 5.4, 2.88, 21.8],
+  );
+  assert.match(items[0].quantity, /150g.*3.*450g/);
+  assert.match(items[1].quantity, /400g.*3.*1200g/);
+  assert.match(items[2].quantity, /800g.*1/);
+  assert.match(items[3].quantity, /30枚.*1.59kg.*盒数待确认/);
+  assert.deepEqual(
+    items.map((item) => item.productionDate),
+    ["2026-10-30", "2026-10-30", "", ""],
+  );
+  for (const item of items) {
+    assert.equal(item.shelfLife, "");
+    assert.equal(item.purchaseDate, "");
+    assert.equal(item.expiryDate, "");
+    assert.equal(item.storage, "unknown");
+    assert.equal(P.deadlineInfo(item, "2026-11-03").status, "missing");
+  }
+});
+
+test("purchase migration appends once, preserving edits, archived records and deletions", () => {
+  const original = P.seedItems().slice(0, 11);
+  original[0].remaining = "一半";
+  original[5].status = "eaten";
+  original[5].finishedDate = "2026-10-31";
+  const migrated = P.applyPurchaseUpdates(
+    P.parseBackup({ version: 1, items: original }),
+  );
+  assert.equal(migrated.items.length, 15);
+  assert.deepEqual(migrated.items.slice(0, 11), original);
+  assert.deepEqual(migrated.appliedPurchaseBatches, [P.PURCHASE_BATCH_ID]);
+  const edited = P.purchaseItems()[0];
+  edited.remaining = "1盒";
+  const partial = P.applyPurchaseUpdates({ version: 1, items: [edited] });
+  assert.equal(partial.items.length, 4);
+  assert.equal(partial.items[0].remaining, "1盒");
+  migrated.items.pop();
+  const reloaded = P.applyPurchaseUpdates(
+    P.parseBackup(JSON.stringify(migrated)),
+  );
+  assert.equal(reloaded.items.length, 14);
+  assert.deepEqual(reloaded, migrated);
+  const full = {
+    version: 1,
+    items: Array.from({ length: 5000 }, (_, index) =>
+      item({ id: `full-${index}` }),
+    ),
+  };
+  assert.equal(P.applyPurchaseUpdates(full), full);
+});
+
+test("production date is optional in old backups and cannot follow known purchase or deadline dates", () => {
+  const { productionDate, ...legacy } = item();
+  assert.equal(P.validateItem(legacy).productionDate, "");
+  assert.equal(
+    P.validateItem(item({ productionDate: "2026-10-30" })).productionDate,
+    "2026-10-30",
+  );
+  for (const changes of [
+    { productionDate: "2026-02-30" },
+    { productionDate: "2026-10-30", purchaseDate: "2026-10-29" },
+    { productionDate: "2026-10-30", expiryDate: "2026-10-29" },
+    { productionDate: "2026-10-30", openedDate: "2026-10-29" },
+    { productionDate: "2026-10-30", useByDate: "2026-10-29" },
+  ])
+    assert.throws(() => P.validateItem(item(changes)));
+});
+
+test("backup batch markers are validated without adding records during import parsing", () => {
+  const empty = {
+    version: 1,
+    items: [],
+    appliedPurchaseBatches: [P.PURCHASE_BATCH_ID],
+  };
+  assert.deepEqual(P.parseBackup(JSON.stringify(empty)), empty);
+  assert.deepEqual(P.applyPurchaseUpdates(empty), empty);
+  for (const batches of ["invalid", [null], [""], ["same", "same"]])
+    assert.throws(() =>
+      P.parseBackup({ version: 1, items: [], appliedPurchaseBatches: batches }),
+    );
 });
 
 test("calendar dates validate leap years, ranges and malformed dates", () => {

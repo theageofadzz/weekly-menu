@@ -18,6 +18,7 @@
     other: "package",
   };
   const statusNames = { active: "在库", eaten: "已吃完", discarded: "已丢弃" };
+  const PURCHASE_BATCH_ID = "purchase-screenshot-20261103";
   const PRODUCT_DETAILS_REVISION = "product-screenshots-20261026";
   const productShelfLives = {
     顺德鱼皮角: "12个月",
@@ -109,31 +110,109 @@
     };
   }
   function seedItems() {
-    return seedData.map(([name, quantity, price, category, notes], index) => ({
-      id: `initial-purchase-20261025-${index + 1}`,
-      name,
-      quantity,
-      price,
-      category,
-      notes,
-      remaining: "",
-      storage: "unknown",
-      purchaseDate: "",
-      expiryDate: "",
-      openedDate: "",
-      useByDate: "",
-      shelfLife: productShelfLives[name] || "",
-      productDetailsRevision: productShelfLives[name]
-        ? PRODUCT_DETAILS_REVISION
-        : "",
-      dateBasis: "label",
-      shop: "",
-      status: "active",
-      finishedDate: "",
-      createdAt: "2026-10-25T00:00:00+08:00",
-      updatedAt: "2026-10-25T00:00:00+08:00",
-      source: "2026年10月25日提交的采购截图；购买日期待确认",
-    }));
+    const original = seedData.map(
+      ([name, quantity, price, category, notes], index) => ({
+        id: `initial-purchase-20261025-${index + 1}`,
+        name,
+        quantity,
+        price,
+        category,
+        notes,
+        remaining: "",
+        storage: "unknown",
+        purchaseDate: "",
+        productionDate: "",
+        expiryDate: "",
+        openedDate: "",
+        useByDate: "",
+        shelfLife: productShelfLives[name] || "",
+        productDetailsRevision: productShelfLives[name]
+          ? PRODUCT_DETAILS_REVISION
+          : "",
+        dateBasis: "label",
+        shop: "",
+        status: "active",
+        finishedDate: "",
+        createdAt: "2026-10-25T00:00:00+08:00",
+        updatedAt: "2026-10-25T00:00:00+08:00",
+        source: "2026年10月25日提交的采购截图；购买日期待确认",
+      }),
+    );
+    return [...original, ...purchaseItems()];
+  }
+  function purchaseItems() {
+    const purchases = [
+      {
+        name: "慢养黑猪冷鲜瘦肉丝",
+        quantity: "约150g / 盒 × 3，合计约450g",
+        price: 24.27,
+        category: "meat",
+        productionDate: "2026-10-30",
+        notes:
+          "单价8.09元 / 盒，3盒合计实付24.27元；与原有约200g装瘦肉丝分批记录。",
+      },
+      {
+        name: "象大厨内酯豆腐",
+        quantity: "400g / 盒 × 3，合计1200g",
+        price: 5.4,
+        category: "other",
+        productionDate: "2026-10-30",
+        notes: "单价1.80元 / 盒，3盒合计实付5.40元。",
+      },
+      {
+        name: "鲜切冬瓜",
+        quantity: "约800g / 份 × 1",
+        price: 2.88,
+        category: "vegetable",
+        productionDate: "",
+        notes: "单价2.88元 / 份，实付2.88元。",
+      },
+      {
+        name: "安心蛋保洁鲜鸡蛋",
+        quantity: "30枚 / 盒，1.59kg / 盒 · 盒数待确认",
+        price: 21.8,
+        category: "dairy",
+        productionDate: "",
+        notes: "截图可见单价及实付均为21.80元；购买盒数被截住，未推断总枚数。",
+      },
+    ];
+    return purchases.map((purchase, index) =>
+      validateItem({
+        id: `${PURCHASE_BATCH_ID}-${index + 1}`,
+        remaining: "",
+        storage: "unknown",
+        purchaseDate: "",
+        expiryDate: "",
+        openedDate: "",
+        useByDate: "",
+        shelfLife: "",
+        productDetailsRevision: "",
+        dateBasis: "label",
+        shop: "",
+        status: "active",
+        finishedDate: "",
+        createdAt: "2026-11-03T00:00:00+08:00",
+        updatedAt: "2026-11-03T00:00:00+08:00",
+        source:
+          "2026年11月3日提交的已送达订单截图；购买日期、保存方式和保质期待确认",
+        ...purchase,
+      }),
+    );
+  }
+  function applyPurchaseUpdates(data) {
+    const batches = data.appliedPurchaseBatches || [];
+    if (batches.includes(PURCHASE_BATCH_ID)) return data;
+    const existingIds = new Set(data.items.map((item) => item.id));
+    const additions = purchaseItems().filter(
+      (item) => !existingIds.has(item.id),
+    );
+    if (data.items.length + additions.length > 5000) return data;
+    // Remember the batch so edited, archived or deleted purchases stay that way.
+    return {
+      ...data,
+      items: [...data.items, ...additions],
+      appliedPurchaseBatches: [...batches, PURCHASE_BATCH_ID],
+    };
   }
   function validateItem(item) {
     if (!item || typeof item !== "object" || Array.isArray(item))
@@ -146,6 +225,7 @@
       "storage",
       "category",
       "purchaseDate",
+      "productionDate",
       "expiryDate",
       "openedDate",
       "useByDate",
@@ -196,6 +276,7 @@
       item.price === null ? null : Math.round(item.price * 100) / 100;
     for (const key of [
       "purchaseDate",
+      "productionDate",
       "expiryDate",
       "openedDate",
       "useByDate",
@@ -204,6 +285,16 @@
       if (copy[key] && dayNumber(copy[key]) === null)
         throw new Error("请填写有效的日期（1900年至2200年）");
     }
+    if (
+      copy.productionDate &&
+      [
+        copy.purchaseDate,
+        copy.expiryDate,
+        copy.openedDate,
+        copy.useByDate,
+      ].some((date) => date && date < copy.productionDate)
+    )
+      throw new Error("购买、开封或截止日期不能早于生产日期");
     if (
       copy.purchaseDate &&
       copy.expiryDate &&
@@ -241,7 +332,21 @@
     const items = data.items.map(validateItem);
     if (new Set(items.map((item) => item.id)).size !== items.length)
       throw new Error("备份中有重复编号，请先检查备份");
-    return { version: 1, items: completeProductDetails(items) };
+    const result = { version: 1, items: completeProductDetails(items) };
+    if (data.appliedPurchaseBatches !== undefined) {
+      if (
+        !Array.isArray(data.appliedPurchaseBatches) ||
+        data.appliedPurchaseBatches.length > 1000 ||
+        data.appliedPurchaseBatches.some(
+          (batch) => typeof batch !== "string" || !batch || batch.length > 120,
+        ) ||
+        new Set(data.appliedPurchaseBatches).size !==
+          data.appliedPurchaseBatches.length
+      )
+        throw new Error("备份中的采购批次记录无效");
+      result.appliedPurchaseBatches = [...data.appliedPurchaseBatches];
+    }
+    return result;
   }
   function completeProductDetails(items) {
     return items.map((item) => {
@@ -299,6 +404,7 @@
   }
   const api = {
     STORAGE_KEY,
+    PURCHASE_BATCH_ID,
     storageNames,
     categoryIcons,
     statusNames,
@@ -307,6 +413,8 @@
     deadline,
     deadlineInfo,
     seedItems,
+    purchaseItems,
+    applyPurchaseUpdates,
     validateItem,
     parseBackup,
     mergeItems,

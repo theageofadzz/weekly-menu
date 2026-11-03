@@ -64,14 +64,17 @@ function setup(t, raw) {
   return { w, $, click, fill, submit, saved, advance, timers };
 }
 
-test("first load preserves all purchases and existing saved empty inventory stays empty", (t) => {
+test("first load includes the delivered order and saved empty inventory gains only new purchases", (t) => {
   const a = setup(t);
-  assert.equal(a.$("#stat-spent").textContent, "¥135.76");
-  assert.equal(a.w.document.querySelectorAll(".food-row").length, 11);
-  assert.equal(a.saved().items.length, 11);
+  assert.equal(a.$("#stat-spent").textContent, "¥190.11");
+  assert.equal(a.w.document.querySelectorAll(".food-row").length, 15);
+  assert.equal(a.saved().items.length, 15);
   const b = setup(t, JSON.stringify({ version: 1, items: [] }));
-  assert.equal(b.saved().items.length, 0);
-  assert.equal(b.$("#empty-state").hidden, false);
+  assert.equal(b.saved().items.length, 4);
+  assert.equal(b.$("#stat-spent").textContent, "¥54.35");
+  const c = setup(t, JSON.stringify({ ...b.saved(), items: [] }));
+  assert.equal(c.saved().items.length, 0);
+  assert.equal(c.$("#empty-state").hidden, false);
 });
 
 test("add, reload, edit, search and remaining quantities persist with exact prices", (t) => {
@@ -87,9 +90,9 @@ test("add, reload, edit, search and remaining quantities persist with exact pric
   a.fill("expiryDate", "2026-10-29");
   a.submit();
   assert.equal(a.$("#food-dialog").open, false);
-  assert.equal(a.saved().items.length, 12);
+  assert.equal(a.saved().items.length, 16);
   assert.match(a.$("#food-list").textContent, /剩 3 天/);
-  assert.equal(a.$("#stat-spent").textContent, "¥148.10");
+  assert.equal(a.$("#stat-spent").textContent, "¥202.45");
   const reload = setup(t, JSON.stringify(a.saved()));
   assert.match(reload.$("#food-list").textContent, /测试牛奶/);
   reload.click('[aria-label="编辑 测试牛奶"]');
@@ -114,7 +117,7 @@ test("consume and restore retain purchase history and spend", (t) => {
     a.saved().items.find((x) => x.name === "菜心苗").status,
     "eaten",
   );
-  assert.equal(a.$("#stat-spent").textContent, "¥135.76");
+  assert.equal(a.$("#stat-spent").textContent, "¥190.11");
   a.click('[data-view="history"]');
   a.click('[data-filter="eaten"]');
   assert.equal(a.w.document.querySelectorAll(".food-row").length, 1);
@@ -151,7 +154,7 @@ test("form rejects contradictory dates and protects unsaved input on storage fai
   a.fill("expiryDate", "2026-10-25");
   a.submit();
   assert.match(a.$("#form-error").textContent, /不能早于购买/);
-  assert.equal(a.saved().items.length, 11);
+  assert.equal(a.saved().items.length, 15);
   a.fill("expiryDate", "2026-10-27");
   a.w.Storage.prototype.setItem = () => {
     throw new Error("Quota exceeded");
@@ -159,7 +162,7 @@ test("form rejects contradictory dates and protects unsaved input on storage fai
   a.submit();
   assert.equal(a.$("#food-dialog").open, true);
   assert.match(a.$("#storage-error").textContent, /保存失败/);
-  assert.equal(a.saved().items.length, 11);
+  assert.equal(a.saved().items.length, 15);
 });
 
 test("bad existing storage is never silently replaced", (t) => {
@@ -223,12 +226,12 @@ test("delete requires confirmation and removes only the selected historical reco
   a.click('[aria-label="删除 菜心苗"]');
   a.$("#confirm-dialog").close("cancel");
   await new Promise(setImmediate);
-  assert.equal(a.saved().items.length, 11);
+  assert.equal(a.saved().items.length, 15);
   a.click('[aria-label="删除 菜心苗"]');
   a.$("#confirm-dialog").close("confirm");
   await new Promise(setImmediate);
-  assert.equal(a.saved().items.length, 10);
-  assert.equal(a.$("#stat-spent").textContent, "¥130.42");
+  assert.equal(a.saved().items.length, 14);
+  assert.equal(a.$("#stat-spent").textContent, "¥184.77");
 });
 
 test("import merges only valid backups and preserves data on malformed files", async (t) => {
@@ -251,14 +254,14 @@ test("import merges only valid backups and preserves data on malformed files", a
   assert.equal(a.$("#confirm-dialog").open, true);
   a.$("#confirm-dialog").close("confirm");
   await new Promise(setImmediate);
-  assert.equal(a.saved().items.length, 12);
+  assert.equal(a.saved().items.length, 16);
   Object.defineProperty(input, "files", {
     configurable: true,
     value: [{ size: 100, text: async () => "broken backup" }],
   });
   input.dispatchEvent(new a.w.Event("change"));
   await new Promise(setImmediate);
-  assert.equal(a.saved().items.length, 12);
+  assert.equal(a.saved().items.length, 16);
   assert.match(a.$("#toast").textContent, /导入失败/);
 });
 
@@ -283,7 +286,12 @@ test("export includes all persisted records and corrupted original data is recov
     if (original) {
       assert.equal(text, original);
       assert.match(fileName, /原始数据/);
-    } else assert.equal(JSON.parse(text).items.length, 11);
+    } else {
+      const exported = JSON.parse(text);
+      assert.equal(exported.items.length, 15);
+      assert.deepEqual(exported.appliedPurchaseBatches, [P.PURCHASE_BATCH_ID]);
+      assert.equal(exported.items[11].productionDate, "2026-10-30");
+    }
   }
 });
 
@@ -301,16 +309,16 @@ test("clearing storage from another tab blocks writing instead of silently recre
 });
 
 test("existing browser records persist screenshot shelf lives without overwriting dates or quantities", (t) => {
-  const old = P.seedItems().map(
-    ({ shelfLife, productDetailsRevision, ...item }) => item,
-  );
+  const old = P.seedItems()
+    .slice(0, 11)
+    .map(({ shelfLife, productDetailsRevision, ...item }) => item);
   old[0].remaining = "一半";
   old[0].expiryDate = "2026-11-15";
   const a = setup(t, JSON.stringify({ version: 1, items: old }));
   assert.equal(a.saved().items[0].shelfLife, "12个月");
   assert.equal(a.saved().items[0].remaining, "一半");
   assert.equal(a.saved().items[0].expiryDate, "2026-11-15");
-  assert.equal(a.saved().items.length, 11);
+  assert.equal(a.saved().items.length, 15);
   a.click('[aria-label="编辑 顺德鱼皮角"]');
   assert.equal(a.$('[name="shelfLife"]').value, "12个月");
   a.fill("shelfLife", "以实物包装为准");
@@ -332,4 +340,42 @@ test("shelf life alone never becomes a countdown and is escaped as plain text", 
     a.saved().items.find((item) => item.name === "去皮五花肉片").expiryDate,
     "",
   );
+});
+
+test("latest-purchase filter shows the four new batches and editable production dates", (t) => {
+  const a = setup(t);
+  a.click('[data-filter="recent"]');
+  assert.equal(a.w.document.querySelectorAll(".food-row").length, 4);
+  assert.match(a.$("#food-list").textContent, /慢养黑猪冷鲜瘦肉丝/);
+  assert.equal(a.$('[data-id="initial-purchase-20261025-6"]'), null);
+  assert.match(a.$("#food-list").textContent, /生产 2026.10.30/);
+  assert.match(a.$("#food-list").textContent, /盒数待确认/);
+  a.click('[aria-label="编辑 象大厨内酯豆腐"]');
+  assert.equal(a.$('[name="productionDate"]').value, "2026-10-30");
+  a.fill("productionDate", "2026-10-31");
+  a.fill("remaining", "2盒");
+  a.submit();
+  const reload = setup(t, JSON.stringify(a.saved()));
+  const tofu = reload
+    .saved()
+    .items.find((item) => item.name === "象大厨内酯豆腐");
+  assert.equal(tofu.productionDate, "2026-10-31");
+  assert.equal(tofu.remaining, "2盒");
+  assert.equal(reload.saved().items.length, 15);
+  assert.equal(reload.$("#stat-soon").textContent, "0项");
+});
+
+test("consuming then deleting a screenshot purchase stays deleted after reload", async (t) => {
+  const a = setup(t);
+  a.click('[aria-label="吃完 鲜切冬瓜"]');
+  a.click('[data-filter="recent"]');
+  assert.equal(a.w.document.querySelectorAll(".food-row").length, 3);
+  a.click('[data-view="history"]');
+  a.click('[aria-label="删除 鲜切冬瓜"]');
+  a.$("#confirm-dialog").close("confirm");
+  await new Promise(setImmediate);
+  const reload = setup(t, JSON.stringify(a.saved()));
+  assert.equal(reload.saved().items.length, 14);
+  assert.ok(!reload.saved().items.some((item) => item.name === "鲜切冬瓜"));
+  assert.equal(reload.$("#stat-spent").textContent, "¥187.23");
 });
